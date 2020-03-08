@@ -30,9 +30,9 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 
 
 class Instructor:
-    def __init__(self, opt):
+    def __init__(self, opt, dsname):
         self.opt = opt
-
+        self.dsname = dsname
         if 'bert' in opt.model_name:
             tokenizer = Tokenizer4Bert(opt.max_seq_len, opt.pretrained_bert_name)
             bert = BertModel.from_pretrained(opt.pretrained_bert_name)
@@ -50,12 +50,15 @@ class Instructor:
 
         self.trainset = ABSADataset(opt.dataset_file['train'], tokenizer)
         self.testset = ABSADataset(opt.dataset_file['test'], tokenizer)
-        assert 0 <= opt.valset_ratio < 1
-        if opt.valset_ratio > 0:
-            valset_len = int(len(self.trainset) * opt.valset_ratio)
-            self.trainset, self.valset = random_split(self.trainset, (len(self.trainset)-valset_len, valset_len))
-        else:
-            self.valset = self.testset
+        self.valset = ABSADataset("/home/naort/Desktop/Sentiment/ABSA-PyTorch/datasets/semeval14/val/val.xml.seg",
+                                  tokenizer)
+
+        # assert 0 <= opt.valset_ratio < 1
+        # if opt.valset_ratio > 0:
+        #     valset_len = int(len(self.trainset) * opt.valset_ratio)
+        #     self.trainset, self.valset = random_split(self.trainset, (len(self.trainset)-valset_len, valset_len))
+        # else:
+        #     self.valset = self.testset
 
         if opt.device.type == 'cuda':
             logger.info('cuda memory allocated: {}'.format(torch.cuda.memory_allocated(device=opt.device.index)))
@@ -69,7 +72,8 @@ class Instructor:
                 n_trainable_params += n_params
             else:
                 n_nontrainable_params += n_params
-        logger.info('n_trainable_params: {0}, n_nontrainable_params: {1}'.format(n_trainable_params, n_nontrainable_params))
+        logger.info(
+            'n_trainable_params: {0}, n_nontrainable_params: {1}'.format(n_trainable_params, n_nontrainable_params))
         logger.info('> training arguments:')
         for arg in vars(self.opt):
             logger.info('>>> {0}: {1}'.format(arg, getattr(self.opt, arg)))
@@ -123,7 +127,7 @@ class Instructor:
                 max_val_acc = val_acc
                 if not os.path.exists('state_dict'):
                     os.mkdir('state_dict')
-                path = 'state_dict/{0}_{1}_val_acc{2}'.format(self.opt.model_name, self.opt.dataset, round(val_acc, 4))
+                path = 'state_dict/{0}_{1}_val_acc{2}'.format(self.dsname, self.opt.dataset, round(val_acc, 4))
                 torch.save(self.model.state_dict(), path)
                 logger.info('>> saved: {}'.format(path))
             if val_f1 > max_val_f1:
@@ -153,7 +157,8 @@ class Instructor:
                     t_outputs_all = torch.cat((t_outputs_all, t_outputs), dim=0)
 
         acc = n_correct / n_total
-        f1 = metrics.f1_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2], average='macro')
+        f1 = metrics.f1_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2],
+                              average='macro')
         return acc, f1
 
     def run(self):
@@ -174,7 +179,7 @@ class Instructor:
         logger.info('>> test_acc: {:.4f}, test_f1: {:.4f}'.format(test_acc, test_f1))
 
 
-def main():
+def main(dsname):
     # Hyper Parameters
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='bert_spc', type=str)
@@ -184,22 +189,24 @@ def main():
     parser.add_argument('--learning_rate', default=2e-5, type=float, help='try 5e-5, 2e-5 for BERT, 1e-3 for others')
     parser.add_argument('--dropout', default=0.1, type=float)
     parser.add_argument('--l2reg', default=0.01, type=float)
-    parser.add_argument('--num_epoch', default=10, type=int, help='try larger number for non-BERT models')
+    parser.add_argument('--num_epoch', default=2, type=int, help='try larger number for non-BERT models')
     parser.add_argument('--batch_size', default=16, type=int, help='try 16, 32, 64 for BERT models')
     parser.add_argument('--log_step', default=5, type=int)
     parser.add_argument('--embed_dim', default=300, type=int)
     parser.add_argument('--hidden_dim', default=300, type=int)
-    parser.add_argument('--bert_dim', default=1024, type=int)
-    parser.add_argument('--pretrained_bert_name', default='bert-large-uncased', type=str)
+    parser.add_argument('--bert_dim', default=768, type=int)
+    parser.add_argument('--pretrained_bert_name', default='bert-base-uncased', type=str)
     parser.add_argument('--max_seq_len', default=80, type=int)
     parser.add_argument('--polarities_dim', default=3, type=int)
     parser.add_argument('--hops', default=3, type=int)
     parser.add_argument('--device', default=None, type=str, help='e.g. cuda:0')
     parser.add_argument('--seed', default=None, type=int, help='set seed for reproducibility')
-    parser.add_argument('--valset_ratio', default=0, type=float, help='set ratio between 0 and 1 for validation support')
+    parser.add_argument('--valset_ratio', default=0.2, type=float,
+                        help='set ratio between 0 and 1 for validation support')
     # The following parameters are only valid for the lcf-bert model
     parser.add_argument('--local_context_focus', default='cdm', type=str, help='local context focus mode, cdw or cdm')
-    parser.add_argument('--SRD', default=3, type=int, help='semantic-relative-distance, see the paper of LCF-BERT model')
+    parser.add_argument('--SRD', default=3, type=int,
+                        help='semantic-relative-distance, see the paper of LCF-BERT model')
     opt = parser.parse_args()
 
     if opt.seed is not None:
@@ -244,8 +251,8 @@ def main():
             'test': './datasets/semeval14/Laptops_Test_Gold.xml.seg'
         },
         'all': {
-            'train': './datasets/semeval14/all/ALL_TRAIN.xml.seg',
-            'test': './datasets/semeval14/all/ALL_TEST.xml.seg'
+            'train': f'./datasets/tests/{dsname}/train.xml.seg',
+            'test': f'./datasets/tests/{dsname}/test.xml.seg'
         }
 
     }
@@ -256,7 +263,8 @@ def main():
         'ian': ['text_raw_indices', 'aspect_indices'],
         'memnet': ['text_raw_without_aspect_indices', 'aspect_indices'],
         'ram': ['text_raw_indices', 'aspect_indices', 'text_left_indices'],
-        'cabasc': ['text_raw_indices', 'aspect_indices', 'text_left_with_aspect_indices', 'text_right_with_aspect_indices'],
+        'cabasc': ['text_raw_indices', 'aspect_indices', 'text_left_with_aspect_indices',
+                   'text_right_with_aspect_indices'],
         'tnet_lf': ['text_raw_indices', 'aspect_indices', 'aspect_in_text'],
         'aoa': ['text_raw_indices', 'aspect_indices'],
         'mgan': ['text_raw_indices', 'aspect_indices', 'text_left_indices'],
@@ -283,16 +291,80 @@ def main():
     opt.inputs_cols = input_colses[opt.model_name]
     opt.initializer = initializers[opt.initializer]
     opt.optimizer = optimizers[opt.optimizer]
-    # opt.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') \
-    #     if opt.device is None else torch.device(opt.device)
-
-    opt.device = torch.device('cpu')
+    opt.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') \
+        if opt.device is None else torch.device(opt.device)
+    #
+    # opt.device = torch.device('cpu')
     log_file = '{}-{}-{}.log'.format(opt.model_name, opt.dataset, strftime("%y%m%d-%H%M", localtime()))
     logger.addHandler(logging.FileHandler(log_file))
 
-    ins = Instructor(opt)
+    ins = Instructor(opt, dsname)
     ins.run()
 
 
 if __name__ == '__main__':
-    main()
+    arr = ["airliens",
+           "airliens_Politics_Restaurants_Twitter",
+           "airliens_Laptops",
+           "israel_airliens_Laptops_Politics",
+           "israel_airliens_Restaurants_Twitter",
+           "israel_Restaurants_Twitter",
+           "airliens_Laptops_Restaurants",
+           "israel_Laptops",
+           "israel",
+           "airliens_Politics_Twitter",
+           "Laptops_Politics_Restaurants",
+           "Politics_Twitter",
+           "israel_airliens_Politics",
+           "Politics",
+           "israel_Laptops_Politics_Twitter",
+           "israel_airliens_Twitter",
+           "israel_airliens_Laptops_Restaurants_Twitter",
+           "israel_airliens_Restaurants",
+           "israel_airliens_Laptops_Politics_Twitter",
+           "israel_Laptops_Twitter",
+           "Twitter",
+           "Laptops_Twitter",
+           "israel_airliens",
+           "Laptops_Restaurants",
+           "israel_Politics_Restaurants",
+           "airliens_Restaurants_Twitter",
+           "israel_airliens_Laptops_Restaurants",
+           "Laptops_Politics_Twitter",
+           "israel_Politics_Restaurants_Twitter",
+           "airliens_Twitter",
+           "Laptops_Restaurants_Twitter",
+           "israel_Laptops_Politics_Restaurants",
+           "israel_airliens_Politics_Restaurants_Twitter",
+           "airliens_Politics",
+           "israel_Laptops_Restaurants_Twitter",
+           "israel_airliens_Laptops",
+           "Laptops_Politics",
+           "Laptops_Politics_Restaurants_Twitter",
+           "Politics_Restaurants",
+           "Restaurants",
+           "airliens_Laptops_Politics",
+           "israel_Politics_Twitter",
+           "Laptops",
+           "airliens_Laptops_Restaurants_Twitter",
+           "israel_Laptops_Politics_Restaurants_Twitter",
+           "israel_Politics",
+           "Restaurants_Twitter",
+           "airliens_Restaurants",
+           "israel_Laptops_Restaurants",
+           "israel_Restaurants",
+           "israel_airliens_Laptops_Politics_Restaurants",
+           "airliens_Laptops_Twitter",
+           "israel_Laptops_Politics",
+           "israel_airliens_Politics_Twitter",
+           "israel_airliens_Laptops_Politics_Restaurants_Twitter",
+           "Politics_Restaurants_Twitter",
+           "israel_airliens_Laptops_Twitter",
+           "airliens_Politics_Restaurants",
+           "airliens_Laptops_Politics_Restaurants",
+           "airliens_Laptops_Politics_Twitter",
+           "airliens_Laptops_Politics_Restaurants_Twitter",
+           "israel_airliens_Politics_Restaurants",
+           "israel_Twitter"]
+    for a in arr:
+        main(a)
